@@ -100,3 +100,11 @@ class AdvancedLaneFinder:
             self._translation_vectors = tvecs
 
             return self.get_calibration_camera_output()
+
+    def distortion_correction(self, image):
+        """Apply distortion correction to the input image."""
+        return cv2.undistort(image,
+                             self._calibration_matrix,
+                             self._distortion_coefficients,
+                             None,
+                             self._calibration_matrix)
