@@ -16,10 +16,19 @@ class AdvancedLaneFinder:
 
     def __init__(self,
                  chessboard_image_dir='chessboard_images',
-                 absolute_sobel_x=(3, 20, 100),
-                 absolute_sobel_y=(3, 20, 100),
-                 magnitude_sobel=(3, 30, 100),
-                 direction_sobel=(3, 0.7, 1.3),
+                 absolute_sobel_x=(7, 15, 100),
+                 absolute_sobel_y=(7, 15, 100),
+                 magnitude_sobel=(7, 30, 100),
+                 direction_sobel=(31, 0.5, 1.0),
+                 s_channel_thresh=(170, 255),
+                 warp_perspective=(np.float32([(288, 664),
+                                               (1016, 664),
+                                               (240, 696),
+                                               (1064, 696)]),
+                                   np.float32([(240, 640),
+                                               (1064, 640),
+                                               (240, 696),
+                                               (1064, 696)]))
                  ) -> None:
         """Initialize AdvancedLaneFinder instance fields.
 
@@ -33,6 +42,9 @@ class AdvancedLaneFinder:
                                     magnitude value of Sobel_x and Sobel_y operators
             :param direction_sobel: tuple containing Sobel kernel size, min and max threshold values for
                                     direction value of Sobel_x and Sobel_y operators
+            :param s_channel_thresh: tuple containing min and max threshold values fof S channel of HLS image
+            :param warp_perspective: tuple containing source and destination coordinates
+                                     to calculate a perspective transform
         """
         # initialize directory with chessboard images
         if os.path.isdir(chessboard_image_dir):
@@ -49,12 +61,13 @@ class AdvancedLaneFinder:
         else:
             logging.info("There are %d calibration images.", len(self._chessboard_image_path_list))
 
-        # calibration matrix, distortion coefficients, rotation vectors, and translation vectors
+        # image size, calibration matrix, distortion coefficients, rotation vectors, and translation vectors
         # will be initialized in self.calibrate_camera()
         self._calibration_matrix = None
         self._distortion_coefficients = None
         self._rotation_vectors = None
         self._translation_vectors = None
+        self._image_size = None
 
         # thresholds (absolute Sobel_x)
         if absolute_sobel_x[1] > absolute_sobel_x[2]:
@@ -92,6 +105,21 @@ class AdvancedLaneFinder:
         self._dir_sobel_thresh_min = direction_sobel[1]
         self._dir_sobel_thresh_max = direction_sobel[2]
 
+        # thresholds (S channel of HLS)
+        if s_channel_thresh[0] > s_channel_thresh[1]:
+            raise AdvancedLaneFinderError(
+                "Thresholds for S channel of HLS image are incorrect; minimum greater than maximum [ %s ]."
+                % s_channel_thresh)
+        self._s_channel_thresh_min = s_channel_thresh[0]
+        self._s_channel_thresh_max = s_channel_thresh[1]
+
+        # source and destination coordinates of quadrangle vertices
+        self._warp_src_vertices = warp_perspective[0]
+        self._warp_dst_vertices = warp_perspective[1]
+        # calculate the perspective transform matrix
+        self._perspective_transform_matrix = \
+            cv2.getPerspectiveTransform(self._warp_src_vertices, self._warp_dst_vertices)
+
     def get_chessboard_image_list(self) -> List[str]:
         """Getter for chessboard image path list."""
         return self._chessboard_image_path_list
@@ -119,6 +147,9 @@ class AdvancedLaneFinder:
 
         # get reference image shape
         img_shape = cv2.imread(self._chessboard_image_path_list[0]).shape[1::-1]
+
+        # initialize image size
+        self._image_size = img_shape
 
         # step through the list of chessboard image paths and search for chessboard corners
         for fname in self._chessboard_image_path_list:
@@ -162,6 +193,13 @@ class AdvancedLaneFinder:
                              self._distortion_coefficients,
                              None,
                              self._calibration_matrix)
+
+    def warp_perspective(self, image):
+        """Calculates a perspective transform from four pairs of the corresponding points."""
+        # warp the image using OpenCV warpPerspective()
+        warped = cv2.warpPerspective(image, self._perspective_transform_matrix, self._image_size)
+
+        return warped
 
     def _dir_threshold(self, gray) -> np.ndarray:
         """Apply threshold to gray scale image using direction of the gradient."""
@@ -215,8 +253,19 @@ class AdvancedLaneFinder:
         binary_output[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
         return binary_output
 
+    def _s_channel_threshold(self, hls):
+        s_channel = hls[:, :, 2]  # use S channel
+
+        # create a copy and apply the threshold
+        binary_output = np.zeros_like(s_channel)
+        binary_output[(s_channel >= self._s_channel_thresh_min) & (s_channel <= self._s_channel_thresh_max)] = 1
+        return binary_output
+
     def apply_thresholds(self, image: np.ndarray) -> np.ndarray:
         """Create a thresholded binary image."""
+        # convert to HLS
+        hls = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
+
         # gray scale
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -225,9 +274,11 @@ class AdvancedLaneFinder:
         abs_y_binary = self._abs_threshold(gray, orient='y')
         mag_binary = self._mag_threshold(gray)
         dir_binary = self._dir_threshold(gray)
+        s_channel_binary = self._s_channel_threshold(hls)
 
         # combine thresholded images
         combined = np.zeros_like(dir_binary)
-        combined[((abs_x_binary == 1) & (abs_y_binary == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
+        combined[((abs_x_binary == 1) & (abs_y_binary == 1))
+                 | ((mag_binary == 1) & (dir_binary == 1))
+                 | (s_channel_binary == 1)] = 1
         return combined
-
