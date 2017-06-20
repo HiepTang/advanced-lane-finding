@@ -31,11 +31,14 @@ class AdvancedLaneFinder:
                                                (288, 664),
                                                (1016, 664)])),
                  sliding_window_params=(8, 100, 50),
+                 meters_per_pixel=(30/720, 3.7/700),
+                 max_recent_xfitted=10,
+                 bias_pixels_cnt=50,
                  region_of_interest_verts=np.array([[(0, 720),
                                                      (640, 405),
                                                      (640, 405),
                                                      (1280, 720)]],
-                                                   dtype = np.int32),
+                                                   dtype=np.int32),
                  ) -> None:
         """Initialize AdvancedLaneFinder instance fields.
 
@@ -133,9 +136,11 @@ class AdvancedLaneFinder:
         # source and destination coordinates of quadrangle vertices
         self._warp_src_vertices = warp_perspective[0]
         self._warp_dst_vertices = warp_perspective[1]
-        # calculate the perspective transform matrix
+        # calculate the perspective transform matrix (and inverse)
         self._perspective_transform_matrix = \
             cv2.getPerspectiveTransform(self._warp_src_vertices, self._warp_dst_vertices)
+        self._inverse_perspective_transform_matrix = \
+            cv2.getPerspectiveTransform(self._warp_dst_vertices, self._warp_src_vertices)
 
         # params for sliding window technique used to fit polynomial
         self._sliding_window_nwindows = sliding_window_params[0]
@@ -148,6 +153,23 @@ class AdvancedLaneFinder:
         # lane lines tracking
         self._left_line = Line()
         self._right_line = Line()
+
+        # set meters per pixel for lines
+        self._left_line.meters_per_pixel_y = meters_per_pixel[0]
+        self._left_line.meters_per_pixel_x = meters_per_pixel[1]
+
+        self._right_line.meters_per_pixel_y = meters_per_pixel[0]
+        self._right_line.meters_per_pixel_x = meters_per_pixel[1]
+
+        # set maximum number of curve fit coefficients to store
+        self._left_line.max_recent_xfitted = max_recent_xfitted
+        self._right_line.max_recent_xfitted = max_recent_xfitted
+
+        # linear space along Y axis
+        self._ploty = np.int32(np.linspace(0, self._image_size[0]-1, self._image_size[0]))
+
+        # number of pixels to be considered during bias from center calculation
+        self._bias_pixels_cnt = bias_pixels_cnt
 
     def get_chessboard_image_list(self) -> List[str]:
         """Getter for chessboard image path list."""
@@ -376,7 +398,7 @@ class AdvancedLaneFinder:
 
         if draw:
             # generate x and y values for plotting
-            ploty = np.linspace(0, image.shape[0]-1, image.shape[0])
+            ploty = self._ploty
             left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
             right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
@@ -535,7 +557,7 @@ class AdvancedLaneFinder:
         right_fit = np.polyfit(righty, rightx, 2)
 
         if draw:
-            ploty = np.linspace(0, zero_img.shape[0]-1, zero_img.shape[0])
+            ploty = self._ploty
             left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
             right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
@@ -570,53 +592,135 @@ class AdvancedLaneFinder:
         else:
             return self._sliding_window_fit(image=image, draw=draw)
 
+    def _update_lane_line(self, line, fit):
+        line.detected = True
+        line.current_fit = fit
+        line.ally = self._ploty
+        line.allx = fit[0]*line.ally**2 + fit[1]*line.ally + fit[2]
+
     def _update_lane_lines(self, left_fit, right_fit):
-        self._left_line.detected = True
-        self._left_line.current_fit = left_fit
-        self._right_line.detected = True
-        self._right_line.current_fit = right_fit
+        self._update_lane_line(line=self._left_line, fit=left_fit)
+        self._update_lane_line(line=self._right_line, fit=right_fit)
 
-    def calculate_curvature(self):
-        ploty = np.linspace(0, 719, num=720)# to cover same y-range as image
-        # Define conversions in x and y from pixels space to meters
-        ym_per_pix = 30 / 720 # meters per pixel in y dimension
-        xm_per_pix = 3.7 / 700 # meters per pixel in x dimension
+    def _calculate_curvature(self):
+        """Calculate curvature of eft and right lane lines."""
+        y_eval = np.max(self._ploty)
 
-        # Fit new polynomials to x,y in world space
-        left_fit_cr = np.polyfit(ploty*ym_per_pix, leftx*xm_per_pix, 2)
-        right_fit_cr = np.polyfit(ploty*ym_per_pix, rightx*xm_per_pix, 2)
-        # Calculate the new radii of curvature
-        left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
-        right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
-        # Now our radius of curvature is in meters
-        print(left_curverad, 'm', right_curverad, 'm')
+        # fit new polynomials to x,y in world space
+        left_fit_cr = np.polyfit(self._left_line.ally*self._left_line.meters_per_pixel_y,
+                                 self._left_line.allx*self._left_line.meters_per_pixel_x,
+                                 2)
+        right_fit_cr = np.polyfit(self._right_line.ally*self._right_line.meters_per_pixel_y,
+                                  self._right_line.allx*self._right_line.meters_per_pixel_x,
+                                  2)
+        # calculate the new radius of curvature
+        left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*self._left_line.meters_per_pixel_y
+                               + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+        right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*self._right_line.meters_per_pixel_y
+                                + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+
+        self._left_line.radius_of_curvature = left_curverad
+        self._right_line.radius_of_curvature = right_curverad
+
+        # now radius of curvature is in meters
+        return left_curverad, right_curverad
+
+    def _calculate_bias_from_center(self):
+        """Calculate bias from center of the road."""
+        meters_per_pix_x = self._left_line.meters_per_pixel_x
+        middle = self._image_size[1] / 2
+        biases = []
+
+        for i in range(self._image_size[0]-1, self._image_size[0] - 1 - self._bias_pixels_cnt, -1):
+            dist_left = (middle - self._left_line.allx[i])
+            dist_right = (self._right_line.allx[i] - middle)
+
+            biases.append((dist_left - dist_right) * meters_per_pix_x)
+
+        return sum(biases) / len(biases)
+
+    def draw_polygon(self, undist, warped):
+        """Draw polygon between left and right lane lines."""
+        # create an image to draw the lines on
+        warp_zero = np.zeros_like(warped).astype(np.uint8)
+        color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        pts_left = np.array([np.transpose(np.vstack([self._left_line.allx, self._left_line.ally]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([self._right_line.allx, self._right_line.ally])))])
+        pts = np.hstack((pts_left, pts_right))
+
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+
+        # Warp the blank back to original image space using inverse perspective matrix
+        newwarp = cv2.warpPerspective(color_warp,
+                                      self._inverse_perspective_transform_matrix,
+                                      self._image_size[::-1])
+        # Combine the result with the original image
+        result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+
+        return result
+
+    def add_text(self, image):
+        l_curveradius, r_curveradius = self._calculate_curvature()
+        curvaturerad = (l_curveradius + r_curveradius) / 2
+        bias = self._calculate_bias_from_center()
+
+        cv2.putText(image,
+                    "Curvature Radius = %8.2f m" % curvaturerad,
+                    (50, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    color=(255, 255, 255),
+                    thickness=4)
+
+        cv2.putText(image,
+                    "Bias from Center = %8.2f m" % bias,
+                    (50, 160),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    color=(255, 255, 255),
+                    thickness=4)
+        return image
+
 
     def pipeline(self, image, stop_on_step=None):
+        """Apply sequence of transformations to the input image with the intent to draw polygon between lanes."""
         if not self._calibrated:
             self.calibrate_camera()
             if stop_on_step == 'calibrate_camera':
                 return self.get_calibration_camera_output()
 
-        image = self.distortion_correction(image=image)
+        undist = self.distortion_correction(image=image)
         if stop_on_step == 'distortion_correction':
-            return image
+            return undist
 
-        image = self.apply_thresholds(image=image)
+        thresholded = self.apply_thresholds(image=undist)
         if stop_on_step == 'apply_thresholds':
-            return image
+            return thresholded
 
-        image = self.region_of_interest(image=image)
+        reg_of_interest = self.region_of_interest(image=thresholded)
         if stop_on_step == 'region_of_interest':
-            return image
+            return reg_of_interest
 
-        image = self.warp_perspective(image=image)
+        warped = self.warp_perspective(image=reg_of_interest)
         if stop_on_step == 'warp_perspective':
-            return image
+            return warped
 
         # returns visualization of fitted curves, if certain conditions met
-        fit_polynomial_vis = self.fit_polynomial(image=image, draw=(stop_on_step == 'fit_polynomial'))
+        fit_polynomial_vis = self.fit_polynomial(image=warped, draw=(stop_on_step == 'fit_polynomial'))
         if stop_on_step == 'fit_polynomial':
             return fit_polynomial_vis
+
+        unwarped = self.draw_polygon(undist=undist, warped=warped)
+        if stop_on_step == 'draw_polygon':
+            return unwarped
+
+        final = self.add_text(image=unwarped)
+        # stop_on_step flag is not needed since this is the last step
+
+        return final
 
 
 class Line:
@@ -628,6 +732,9 @@ class Line:
 
         # x values of the last n fits of the line
         self.recent_xfitted = []
+
+        # maximum size of self.recent_xfitted
+        self.max_recent_xfitted = 10
 
         # average x values of the fitted line over the last n iterations
         self.bestx = None
@@ -652,3 +759,9 @@ class Line:
 
         # y values for detected line pixels
         self.ally = None
+
+        # meters per pixel in y dimension
+        self.meters_per_pixel_y = None
+
+        # meters per pixel in x dimension
+        self.meters_per_pixel_x = None
