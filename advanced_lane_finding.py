@@ -684,7 +684,6 @@ class AdvancedLaneFinder:
                     thickness=4)
         return image
 
-
     def pipeline(self, image, stop_on_step=None):
         """Apply sequence of transformations to the input image with the intent to draw polygon between lanes."""
         if not self._calibrated:
