@@ -12,7 +12,7 @@ The goals / steps of this project are the following:
 * Output visual display of the lane boundaries and numerical estimation of lane curvature and vehicle position.
 
 [//]: # (Image References)
-
+[chessboard_img]:            ./readme_images/chessboard.png                  "Chessboard"
 [original_img]:              ./test_images/test3.jpg                         "Original"
 [undistorted_img]:           ./output_images/test3_undistorted.jpg           "Undistorted"
 [thresholded_img]:           ./output_images/test3_thresholded.jpg           "Thresholded"
@@ -49,7 +49,9 @@ The code for this step is can be found in `AdvancedLaneFinder::calibrate_camera`
 
 I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `objp` is just a replicated array of coordinates, and `objpoints` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `imgpoints` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.
 
-I then used the output `objpoints` and `imgpoints` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function. An example of undistorted image generated using camera calbration results is shown in the next section.
+I then used the output `objpoints` and `imgpoints` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function. An example of undistorted image generated using camera calbration results is shown below.
+
+![alt text][chessboard_img]
 
 #### Pipeline (Images)
 
@@ -86,7 +88,7 @@ The example of the perspective transformation is given below.
 
 ##### 4. Describe how (and identify where in your code) you identified lane-line pixels and fit their positions with a polynomial?
 
-To find the points to be fitted with the second-order polynomial I've used "sliding window" technique. For the rest of images "sliding window" was skipped because it was already known were the points possibly are. The code can be found in `AdvancedLaneFinder::fit_polynomial`, `AdvancedLaneFinder::_sliding_window_fit`, and `AdvancedLaneFinder::_skip_sliding_window_fit`. Here are illustrations of sliding window seach and the search technique using margins around previously fitted lines.
+To find the points to be fitted with the second-order polynomial I've used "sliding window" technique. For the rest of images "sliding window" was skipped because it was already known were the points possibly are. The code can be found in `AdvancedLaneFinder::fit_polynomial`, `AdvancedLaneFinder::_sliding_window_fit`, and `AdvancedLaneFinder::_skip_sliding_window_fit`. Here are illustrations of sliding window seach and the search technique using margins around previously fitted lines. Also, a simple sanity test was implemented that prevents catastrofic misdetections. The difference between bottom pixels of the new and old fitted lines is calculated and, if it is greater than predefined constant, old fitted coordinates are left unchanged. If certain number (another constant) of failures happen in a row, then sliding window search is performed again.
 
 ![alt text][first_fit_polynomial_img]
 
@@ -118,7 +120,7 @@ The result video can be found in [this repository](./output_videos/project_video
 
 In this project I followed the recomendations given by Udacity. The trickiest part was to create a reusable python module. It was also hard to implement sliding window technique and its visualization.
 
-The implementation performs well on the project video and not so well on other videos with worse environment conditions. The pipeline will likely fail in the situations with a long sequence of "bad" frames---where thresholded images does not highlight lane lines. The failure will happen because sliding window technique is used only once, the latter pictures are proccessed based on the previously obtained knowledge about lane lines location. The problem can be overcome by some failure deterction technique or by simply performing sliding windows search each N frame. 
+The implementation performs well on the project video and not so well on other videos with worse environment conditions. The pipeline will likely fail in the situations when the road has cracks coming alongside the lane lines, such as in challenge video. Sanity checks and recovery are helping here---eventually the lanes are detected correctly, but there are noticable sequence of frames on the chanllenge video, when lines are detected completely wrong. 
 
-Smothing and failure recovery should be implemented to make `AdvancedLaneFinder` work with videos capturing worse environment conditions.
+Smothing and failure recovery should be more sophisticated to make `AdvancedLaneFinder` work with videos capturing worse environment conditions. Lane detection can be improved with the follwoing approach: obtain lane pixels by color. The rationale behind it is that lanes in this project are either yellow or white. 
 

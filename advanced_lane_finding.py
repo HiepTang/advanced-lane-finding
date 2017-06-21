@@ -1,5 +1,6 @@
 import os
 import logging
+import math
 import numpy as np
 import cv2
 
@@ -33,7 +34,7 @@ class AdvancedLaneFinder:
                  sliding_window_params=(8, 100, 50),
                  meters_per_pixel=(30/720, 3.7/700),
                  max_recent_xfitted=10,
-                 bias_pixels_cnt=50,
+                 lane_detection_failure_count_before_sliding_window=20,
                  region_of_interest_verts=np.array([[(0, 720),
                                                      (640, 405),
                                                      (640, 405),
@@ -168,8 +169,9 @@ class AdvancedLaneFinder:
         # linear space along Y axis
         self._ploty = np.int32(np.linspace(0, self._image_size[0]-1, self._image_size[0]))
 
-        # number of pixels to be considered during bias from center calculation
-        self._bias_pixels_cnt = bias_pixels_cnt
+        # lane detection failure counter
+        self._lane_detection_failure_count = 0
+        self._max_lane_detection_failures_before_sliding_window = lane_detection_failure_count_before_sliding_window
 
     def get_chessboard_image_list(self) -> List[str]:
         """Getter for chessboard image path list."""
@@ -587,23 +589,41 @@ class AdvancedLaneFinder:
             :param image: warped gray scale image
             :param draw: if true, create output image with fitted line drawn
         """
-        if self._left_line.detected and self._right_line.detected:
+        if self._left_line.detected \
+                and self._right_line.detected \
+                and (self._lane_detection_failure_count < self._max_lane_detection_failures_before_sliding_window):
             return self._skip_sliding_window_fit(image=image, draw=draw)
         else:
+            self._lane_detection_failure_count = 0
+            self._left_line.detected = False
+            self._right_line.detected = False
             return self._sliding_window_fit(image=image, draw=draw)
 
-    def _update_lane_line(self, line, fit):
+    def _update_lane_line(self, line, fit, allx):
         line.detected = True
         line.current_fit = fit
         line.ally = self._ploty
-        line.allx = fit[0]*line.ally**2 + fit[1]*line.ally + fit[2]
+        line.allx = allx
 
     def _update_lane_lines(self, left_fit, right_fit):
-        self._update_lane_line(line=self._left_line, fit=left_fit)
-        self._update_lane_line(line=self._right_line, fit=right_fit)
+        new_left_line_allx = left_fit[0]*self._ploty**2 + left_fit[1]*self._ploty + left_fit[2]
+        new_right_line_allx = right_fit[0]*self._ploty**2 + right_fit[1]*self._ploty + right_fit[2]
+
+        # check that detection was correct
+        if self._left_line.detected \
+           and math.fabs(new_left_line_allx[self._image_size[0]-1] - self._left_line.allx[self._image_size[0]-1]) \
+               > 5 \
+           and self._right_line.detected \
+           and math.fabs(new_right_line_allx[self._image_size[0]-1] - self._right_line.allx[self._image_size[0]-1]) \
+               > 5:
+            self._lane_detection_failure_count += 1
+            return
+
+        self._update_lane_line(line=self._left_line, fit=left_fit, allx=new_left_line_allx)
+        self._update_lane_line(line=self._right_line, fit=right_fit, allx=new_right_line_allx)
 
     def _calculate_curvature(self):
-        """Calculate curvature of eft and right lane lines."""
+        """Calculate curvature of left and right lane lines."""
         y_eval = np.max(self._ploty)
 
         # fit new polynomials to x,y in world space
@@ -627,17 +647,11 @@ class AdvancedLaneFinder:
 
     def _calculate_bias_from_center(self):
         """Calculate bias from center of the road."""
-        meters_per_pix_x = self._left_line.meters_per_pixel_x
         middle = self._image_size[1] / 2
-        biases = []
+        dist_left = (middle - self._left_line.allx[self._image_size[0]-1])
+        dist_right = (self._right_line.allx[self._image_size[0]-1] - middle)
 
-        for i in range(self._image_size[0]-1, self._image_size[0] - 1 - self._bias_pixels_cnt, -1):
-            dist_left = (middle - self._left_line.allx[i])
-            dist_right = (self._right_line.allx[i] - middle)
-
-            biases.append((dist_left - dist_right) * meters_per_pix_x)
-
-        return sum(biases) / len(biases)
+        return (dist_left - dist_right) * self._left_line.meters_per_pixel_x
 
     def draw_polygon(self, undist, warped):
         """Draw polygon between left and right lane lines."""
