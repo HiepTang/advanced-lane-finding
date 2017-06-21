@@ -111,7 +111,7 @@ This step is implemented in `AdvancedLaneFinder::draw_polygon` in [advanced_lane
 
 ##### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
-The result video can be found in [this repository](./output_videos/project_video.mp4) as well as on [YouTube](https://www.youtube.com/watch?v=iRGHCgbpnOk).
+The result video can be found in [this repository](./output_videos/project_video.mp4) as well as on [YouTube](https://youtu.be/m2GtR9f2Gkc).
 
 
 #### Discussion
@@ -120,7 +120,7 @@ The result video can be found in [this repository](./output_videos/project_video
 
 In this project I followed the recomendations given by Udacity. The trickiest part was to create a reusable python module. It was also hard to implement sliding window technique and its visualization.
 
-The implementation performs well on the project video and not so well on other videos with worse environment conditions. The pipeline will likely fail in the situations when the road has cracks coming alongside the lane lines, such as in challenge video. Sanity checks and recovery are helping here---eventually the lanes are detected correctly, but there are noticable sequence of frames on the chanllenge video, when lines are detected completely wrong. 
+The implementation performs well on the project video and not so well on other videos with worse environment conditions. The pipeline will likely fail in the situations when the road has cracks coming alongside the lane lines, such as in challenge video. Sanity checks and recovery are helping here---eventually the lanes are detected correctly, but there are noticable sequence of frames on the chanllenge video, when lines are detected completely wrong. Just for the interest of the reader, here is lane detection on chalenge video: [YouTube](https://youtu.be/s0q61dsZPHM). 
 
 Smothing and failure recovery should be more sophisticated to make `AdvancedLaneFinder` work with videos capturing worse environment conditions. Lane detection can be improved with the follwoing approach: obtain lane pixels by color. The rationale behind it is that lanes in this project are either yellow or white. 
 

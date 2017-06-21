@@ -6,7 +6,7 @@ that could be used to detect lane lines on the road. Advanced computer vision te
 ![ANIMATION](readme_images/animation.gif)
 
 Below video is the result of lane lines detection pipeline.
-[![LINK TO YOUTUBE](readme_images/youtube.png)](https://www.youtube.com/watch?v=iRGHCgbpnOk)
+[![LINK TO YOUTUBE](readme_images/youtube.png)](https://youtu.be/m2GtR9f2Gkc)
 
 #### Development Environment
 Use `udacity/carnd-term1-starter-kit:latest` docker image to run the code in this repository.
